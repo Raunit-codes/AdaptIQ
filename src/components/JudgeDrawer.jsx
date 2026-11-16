@@ -1,31 +1,31 @@
 import React, { useState } from 'react';
 import { Sliders, X, Sparkles, Activity, FileCode, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
-import { PRESET_SCENARIOS } from '../mockData';
+// import { PRESET_SCENARIOS } from '../mockData';
 
 export default function JudgeDrawer({ 
   isOpen, 
   onClose, 
   domainState, 
-  lastAttempt, 
+  lastAttempt,
+  isSimulated = false, 
   onApplyScenario,
   attemptHistory = [] 
 }) {
-  const [selectedSubDomain, setSelectedSubDomain] = useState('Phishing Awareness');
+  const [selectedSubDomain, setSelectedSubDomain] = useState('Phishing');
   const [activeViewTab, setActiveViewTab] = useState('math'); // 'math' | 'log' | 'presets'
 
   if (!isOpen) return null;
 
-  const currentDomain = domainState[selectedSubDomain] || {
-    p_know: 0.72,
-    p_transit: 0.15,
-    p_slip: 0.10,
-    p_guess: 0.20
-  };
-
-  const prior = currentDomain.p_know;
-  const pSlip = currentDomain.p_slip ?? 0.10;
-  const pGuess = currentDomain.p_guess ?? 0.20;
-  const pTransit = currentDomain.p_transit ?? 0.15;
+  const currentDomain = domainState[selectedSubDomain] || { p_know: null };
+  const hasStoredMastery = typeof currentDomain.p_know === 'number' && Number.isFinite(currentDomain.p_know);
+  // The backend currently returns mastery only, not trained slip/guess/learning parameters.
+  // Defaults below are illustrative values for this judge-facing calculator only.
+  const prior = hasStoredMastery ? currentDomain.p_know : 0.5;
+  const pSlip = typeof currentDomain.p_slip === 'number' ? currentDomain.p_slip : 0.10;
+  const pGuess = typeof currentDomain.p_guess === 'number' ? currentDomain.p_guess : 0.20;
+  const pTransit = typeof currentDomain.p_transit === 'number' ? currentDomain.p_transit : 0.15;
+  const hasStoredModelParams = [currentDomain.p_slip, currentDomain.p_guess, currentDomain.p_transit]
+    .every((value) => typeof value === 'number' && Number.isFinite(value));
 
   // Real-time calculation steps for Correct case
   const numCorrect = (prior * (1 - pSlip)).toFixed(4);
@@ -70,6 +70,16 @@ export default function JudgeDrawer({
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {(isSimulated || !hasStoredMastery || !hasStoredModelParams) && (
+              <div className="rounded-xl border border-amber-800 bg-amber-950/30 px-3 py-2.5 text-xs leading-5 text-amber-200">
+                {isSimulated
+                  ? 'Judge simulation active: displayed mastery values are local demo values and are not saved to Neon. The calculator parameters below are illustrative.'
+                  : !hasStoredMastery
+                    ? 'No saved mastery score exists for this subdomain yet. The calculator below uses an illustrative 50% prior and example BKT parameters; it does not change learner data.'
+                    : 'The backend currently provides mastery scores, not the fitted slip, guess, and learning parameters. Those values in this inspector are illustrative and are not used by FastAPI.'}
+              </div>
+            )}
 
             {/* Navigation Tabs inside Drawer */}
             <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">

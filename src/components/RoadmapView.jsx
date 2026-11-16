@@ -15,10 +15,10 @@ export default function RoadmapView({
   const nodes = [
     {
       id: 1,
-      title: 'Phishing Awareness',
-      domainKey: 'Phishing Awareness',
+      title: 'Phishing',
+      domainKey: 'Phishing',
       category: 'Email & Link Defense',
-      score: Math.round((domainState['Phishing Awareness']?.p_know ?? 0.72) * 100),
+      score: typeof domainState['Phishing']?.p_know === 'number' ? Math.round(domainState['Phishing'].p_know * 100) : null,
       description: 'Header analysis, typosquatting domains, urgency red flags, and reverse-proxy spoofing.'
     },
     {
@@ -26,7 +26,7 @@ export default function RoadmapView({
       title: 'Password Hygiene',
       domainKey: 'Password Hygiene',
       category: 'Identity & Access Mgmt',
-      score: Math.round((domainState['Password Hygiene']?.p_know ?? 0.85) * 100),
+      score: typeof domainState['Password Hygiene']?.p_know === 'number' ? Math.round(domainState['Password Hygiene'].p_know * 100) : null,
       description: 'Entropy standards, password managers, FIDO2/WebAuthn hardware keys, and credential stuffing defense.'
     },
     {
@@ -34,28 +34,29 @@ export default function RoadmapView({
       title: 'Social Engineering',
       domainKey: 'Social Engineering',
       category: 'Human Factor Defense',
-      score: Math.round((domainState['Social Engineering']?.p_know ?? 0.45) * 100),
+      score: typeof domainState['Social Engineering']?.p_know === 'number' ? Math.round(domainState['Social Engineering'].p_know * 100) : null,
       description: 'Pretexting, AI voice vishing scams, badge tailgating, and executive impersonation protocol.'
     },
     {
       id: 4,
       title: 'Data Handling',
-      domainKey: 'Confidential Data Handling',
+      domainKey: 'Data Handling',
       category: 'Information Security',
-      score: Math.round((domainState['Confidential Data Handling']?.p_know ?? 0.60) * 100),
+      score: typeof domainState['Data Handling']?.p_know === 'number' ? Math.round(domainState['Data Handling'].p_know * 100) : null,
       description: 'PII classification, GDPR compliance, AES-256 encrypted transit, and generative AI leak prevention.'
     },
     {
       id: 5,
       title: 'Incident Reporting',
-      domainKey: 'Incident Reporting & SLA',
+      domainKey: 'Incident Reporting',
       category: 'SecOps & Response',
-      score: Math.round((domainState['Incident Reporting & SLA']?.p_know ?? 0.35) * 100),
+      score: typeof domainState['Incident Reporting']?.p_know === 'number' ? Math.round(domainState['Incident Reporting'].p_know * 100) : null,
       description: 'Golden-hour containment, host network isolation, Kerberos ticket revocation, and SOC breach escalation.'
     }
   ];
 
   const getNodeStatus = (score) => {
+    if (score === null || score === undefined) return 'not-assessed';
     if (score >= 80) return 'mastered';
     if (score >= 50) return 'active';
     return 'locked';
@@ -109,19 +110,20 @@ export default function RoadmapView({
 
         {/* 5-Node Flowchart Layout */}
         <div className="py-8">
-          <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col lg:flex-row items-stretch gap-3 lg:gap-2 min-w-0">
             {nodes.map((node, index) => {
               const status = getNodeStatus(node.score);
               const isMastered = status === 'mastered';
               const isActive = status === 'active';
               const isLocked = status === 'locked';
+              const isNotAssessed = status === 'not-assessed';
               const isSelected = selectedNode?.id === node.id;
 
               return (
                 <React.Fragment key={node.id}>
                   <div
                     onClick={() => setSelectedNode(node)}
-                    className={`flex-1 w-full lg:w-auto p-4 rounded-2xl border transition-all cursor-pointer transform hover:-translate-y-1 ${
+                    className={`flex-1 min-w-0 w-full lg:w-auto p-3 lg:p-4 rounded-2xl border transition-all cursor-pointer transform hover:-translate-y-1 ${
                       isSelected
                         ? 'ring-2 ring-cyan-400 bg-slate-850 shadow-xl shadow-cyan-950'
                         : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
@@ -136,9 +138,11 @@ export default function RoadmapView({
                           ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
                           : isActive
                           ? 'bg-cyan-950 text-cyan-300 border border-cyan-800 animate-pulse'
-                          : 'bg-rose-950/60 text-rose-400 border border-rose-900/60'
+                          : isNotAssessed
+                            ? 'bg-slate-800 text-slate-400 border border-slate-700'
+                            : 'bg-rose-950/60 text-rose-400 border border-rose-900/60'
                       }`}>
-                        {status === 'locked' ? 'Needs Focus' : status}
+                        {isNotAssessed ? 'Not Assessed' : status === 'locked' ? 'Needs Focus' : status}
                       </span>
                     </div>
 
@@ -167,7 +171,7 @@ export default function RoadmapView({
                             className={`h-full rounded-full transition-all duration-500 ${
                               isMastered ? 'bg-emerald-400' : isActive ? 'bg-cyan-400' : 'bg-rose-400'
                             }`}
-                            style={{ width: `${node.score}%` }}
+                            style={{ width: `${node.score ?? 0}%` }}
                           />
                         </div>
                       </div>
@@ -176,16 +180,16 @@ export default function RoadmapView({
                     <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-850 text-xs">
                       <span className="text-slate-400">Mastery:</span>
                       <span className={`font-mono font-bold ${
-                        isMastered ? 'text-emerald-400' : isActive ? 'text-cyan-400' : 'text-rose-400'
+                        isMastered ? 'text-emerald-400' : isActive ? 'text-cyan-400' : isNotAssessed ? 'text-slate-400' : 'text-rose-400'
                       }`}>
-                        {node.score}%
+                        {node.score === null ? 'Not assessed' : `${node.score}%`}
                       </span>
                     </div>
                   </div>
 
                   {/* Connector Arrow for Desktop */}
                   {index < nodes.length - 1 && (
-                    <div className="hidden lg:flex items-center justify-center px-1 text-slate-700">
+                    <div className="hidden lg:flex shrink-0 items-center justify-center text-slate-700">
                       <ArrowRight className="w-4 h-4" />
                     </div>
                   )}
@@ -239,9 +243,9 @@ export default function RoadmapView({
             <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
               <span className="text-xs text-slate-400 block">Current Status</span>
               <span className={`text-base font-bold block mt-1 ${
-                selectedNode.score >= 80 ? 'text-emerald-400' : selectedNode.score >= 50 ? 'text-cyan-400' : 'text-rose-400'
+                selectedNode.score === null ? 'text-slate-400' : selectedNode.score >= 80 ? 'text-emerald-400' : selectedNode.score >= 50 ? 'text-cyan-400' : 'text-rose-400'
               }`}>
-                {selectedNode.score}% Mastery ({getNodeStatus(selectedNode.score).toUpperCase()})
+                {selectedNode.score === null ? 'Not assessed yet' : `${selectedNode.score}% Mastery (${getNodeStatus(selectedNode.score).toUpperCase()})`}
               </span>
             </div>
 

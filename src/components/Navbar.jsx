@@ -109,9 +109,11 @@ export default function Navbar({
             <div className="hidden lg:flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-xs">
               <span className="text-slate-400">Avg Mastery:</span>
               <span className={`font-mono font-bold ${
-                overallMastery >= 75 ? 'text-emerald-400' : overallMastery >= 50 ? 'text-amber-400' : 'text-rose-400'
+                overallMastery === null || overallMastery === undefined
+                  ? 'text-slate-400'
+                  : overallMastery >= 75 ? 'text-emerald-400' : overallMastery >= 50 ? 'text-amber-400' : 'text-rose-400'
               }`}>
-                {overallMastery}%
+                {overallMastery === null || overallMastery === undefined ? '—' : `${overallMastery}%`}
               </span>
             </div>
 

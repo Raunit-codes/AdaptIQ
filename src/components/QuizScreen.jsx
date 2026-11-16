@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
-import { quizQuestions } from '../data/quizData';
-import { updateBKT, getWeakestDomain } from '../utils/bktEngine';
+import React, { useEffect, useState } from 'react';
+import { getNextQuiz, submitAssessment, DEMO_USER_ID } from '../api';
 import { CheckCircle, XCircle, Sparkles, Sliders, ArrowRight, BookOpen, RotateCcw, AlertTriangle, HelpCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -11,6 +10,9 @@ export default function QuizScreen({
   onNavigateToRemediation,
   onNavigateToRoadmap 
 }) {
+  const [quizQuestions, setQuizQuestions] = useState([]);
+  const [loadingQuiz, setLoadingQuiz] = useState(true);
+  const [quizError, setQuizError] = useState('');
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
   const [confidence, setConfidence] = useState(70);
@@ -19,8 +21,52 @@ export default function QuizScreen({
   const [lastBKTResult, setLastBKTResult] = useState(null);
   const [quizHistory, setQuizHistory] = useState([]);
 
-  const currentQ = quizQuestions[currentQuestionIndex] || quizQuestions[0];
-  const currentDomainData = domainState[currentQ.subDomain] || { p_know: 0.5, p_slip: 0.10, p_guess: 0.20, p_transit: 0.15 };
+  const currentQ = quizQuestions[currentQuestionIndex];
+  const currentDomainData = domainState[currentQ?.subDomain] || { p_know: null, p_slip: null, p_guess: null, p_transit: null };
+  const hasCurrentMastery = typeof currentDomainData.p_know === 'number' && Number.isFinite(currentDomainData.p_know);
+
+  const loadAdaptiveQuiz = async () => {
+    setLoadingQuiz(true);
+    setQuizError('');
+    try {
+      const data = await getNextQuiz(DEMO_USER_ID);
+      const questions = (data.quiz || []).map((q) => {
+        let rawOptions = q.options;
+        if (typeof rawOptions === 'string') {
+          try { rawOptions = JSON.parse(rawOptions); }
+          catch { rawOptions = rawOptions.split(';').map((item) => item.trim()).filter(Boolean); }
+        }
+        return {
+          id: q.question_id,
+          subDomain: q.subdomain,
+          question: q.question_text,
+          difficulty: Number(q.difficulty) <= 2 ? 'Easy' : Number(q.difficulty) <= 3 ? 'Medium' : 'Hard',
+          options: (rawOptions || []).map((option, index) => ({
+            id: String.fromCharCode(65 + index),
+            text: typeof option === 'string' ? option : String(option.text ?? option.label ?? option),
+            correct: false,
+          })),
+          explanations: {
+            simple: 'Review the scenario and the correct answer to reinforce this cybersecurity concept.',
+            tech: 'Use the correct response and the associated subdomain to guide further practice.',
+          },
+        };
+      });
+      setQuizQuestions(questions);
+      setCurrentQuestionIndex(0);
+      setSelectedOption(null);
+      setSubmitted(false);
+      setLastBKTResult(null);
+      if (!questions.length) setQuizError('The backend did not return any available questions.');
+    } catch (error) {
+      console.error('Failed to load adaptive quiz:', error);
+      setQuizError(error.message || 'Could not load quiz from backend.');
+    } finally {
+      setLoadingQuiz(false);
+    }
+  };
+
+  useEffect(() => { loadAdaptiveQuiz(); }, []);
 
   const handleOptionSelect = (optionId) => {
     if (!submitted) {
@@ -28,73 +74,100 @@ export default function QuizScreen({
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!selectedOption) return;
 
-    const chosen = currentQ.options.find(o => o.id === selectedOption);
-    const isCorrect = chosen ? chosen.correct : false;
-
-    // Calculate BKT Update
-    const result = updateBKT(
-      currentDomainData.p_know,
-      isCorrect,
-      currentDomainData.p_slip,
-      currentDomainData.p_guess,
-      currentDomainData.p_transit,
-      confidence
+    const chosen = currentQ.options.find(
+      o => o.id === selectedOption
     );
 
-    setLastBKTResult(result);
-    setSubmitted(true);
+    if (!chosen) return;
 
-    // Trigger state update up to App
-    onBKTUpdate(currentQ.subDomain, result.updatedMastery, {
-      questionId: currentQ.id,
-      questionText: currentQ.question,
-      subDomain: currentQ.subDomain,
-      isCorrect,
-      confidence,
-      delta: result.delta,
-      timestamp: new Date().toLocaleTimeString()
-    });
-
-    setQuizHistory(prev => [
-      ...prev,
-      {
-        id: currentQ.id,
-        subDomain: currentQ.subDomain,
-        isCorrect,
-        delta: result.delta
-      }
-    ]);
-
-    // Celebrate high mastery jump
-    if (isCorrect && result.updatedMastery > 0.85) {
-      confetti({
-        particleCount: 40,
-        spread: 60,
-        origin: { y: 0.8 }
+    try {
+      const data = await submitAssessment({
+        user_id: DEMO_USER_ID,
+        new_attempts: [{
+          question_id: currentQ.id,
+          answer: chosen.text,
+        }],
       });
+      const result = data.results?.find((item) => item.question_id === currentQ.id);
+      const correct = Boolean(result?.correct);
+      setQuizQuestions((prev) => prev.map((question) => question.id !== currentQ.id ? question : ({
+        ...question,
+        options: question.options.map((option) => ({
+          ...option,
+          correct: option.text === result?.correct_answer,
+        })),
+      })));
+
+      console.log('Backend BKT result:', data);
+
+      const isAnswerCorrect = correct;
+      const newMastery = data.mastery[currentQ.subDomain];
+
+      if (newMastery !== undefined) {
+        onBKTUpdate(
+          currentQ.subDomain,
+          newMastery,
+          {
+            questionId: currentQ.id,
+            questionText: currentQ.question,
+            subDomain: currentQ.subDomain,
+            isCorrect: isAnswerCorrect,
+            confidence,
+            timestamp: new Date().toLocaleTimeString(),
+          },
+          data.mastery
+        );
+
+        const previousMastery = hasCurrentMastery ? currentDomainData.p_know : null;
+        setLastBKTResult({
+          prior: previousMastery,
+          updatedMastery: newMastery,
+          scorePercent: Math.round(newMastery * 100),
+          delta: previousMastery === null ? null : newMastery - previousMastery,
+        });
+      }
+
+      setSubmitted(true);
+
+      setQuizHistory(prev => [
+        ...prev,
+        {
+          id: currentQ.id,
+          subDomain: currentQ.subDomain,
+          isCorrect: isAnswerCorrect,
+          delta: newMastery !== undefined && hasCurrentMastery
+            ? newMastery - currentDomainData.p_know
+            : null,
+        },
+      ]);
+
+      if (isAnswerCorrect && newMastery > 0.85) {
+        confetti({
+          particleCount: 40,
+          spread: 60,
+          origin: { y: 0.8 },
+        });
+      }
+
+    } catch (error) {
+      console.error('Assessment failed:', error);
+      alert(`Could not submit assessment: ${error.message || 'backend request failed'}`);
     }
   };
 
-  const handleNextAdaptiveQuestion = () => {
-    // Pick next question: prefer weakest sub-domain question that is not current
-    const weakest = getWeakestDomain(domainState);
-    const weakQuestions = quizQuestions.filter(q => q.subDomain === weakest.domainName && q.id !== currentQ.id);
-    
-    let nextIdx;
-    if (weakQuestions.length > 0) {
-      nextIdx = quizQuestions.findIndex(q => q.id === weakQuestions[0].id);
-    } else {
-      nextIdx = (currentQuestionIndex + 1) % quizQuestions.length;
+  const handleNextAdaptiveQuestion = async () => {
+    if (currentQuestionIndex + 1 < quizQuestions.length) {
+      setCurrentQuestionIndex((index) => index + 1);
+      setSelectedOption(null);
+      setSubmitted(false);
+      setLastBKTResult(null);
+      setConfidence(70);
+      return;
     }
-
-    setCurrentQuestionIndex(nextIdx);
-    setSelectedOption(null);
-    setSubmitted(false);
-    setLastBKTResult(null);
-    setConfidence(70);
+    await loadAdaptiveQuiz();
   };
 
   const handleSelectQuestionDirectly = (idx) => {
@@ -105,7 +178,10 @@ export default function QuizScreen({
     setConfidence(70);
   };
 
-  const isSelectedCorrect = submitted && currentQ.options.find(o => o.id === selectedOption)?.correct;
+  const isSelectedCorrect = Boolean(submitted && currentQ?.options.find(o => o.id === selectedOption)?.correct);
+
+  if (loadingQuiz) return <div className="max-w-4xl mx-auto py-12 text-center text-cyan-300">Loading adaptive quiz from backend…</div>;
+  if (quizError || !currentQ) return <div className="max-w-4xl mx-auto py-12 space-y-4 text-center"><p className="text-rose-300">{quizError || 'No questions available.'}</p><button onClick={loadAdaptiveQuiz} className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-bold">Retry</button></div>;
 
   return (
     <div className="max-w-4xl mx-auto py-4 space-y-6">
@@ -178,7 +254,7 @@ export default function QuizScreen({
             className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1.5 bg-slate-800/80 hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 transition"
           >
             <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-            Live BKT: {Math.round(currentDomainData.p_know * 100)}% Mastery
+            Live BKT: {hasCurrentMastery ? `${Math.round(currentDomainData.p_know * 100)}% Mastery` : 'Not assessed'}
           </button>
         </div>
 
@@ -302,17 +378,21 @@ export default function QuizScreen({
                       {isSelectedCorrect ? 'Correct Assessment Response!' : 'Misconception Detected'}
                     </h4>
                     <p className="text-xs opacity-80 mt-0.5">
-                      BKT prior {Math.round(lastBKTResult.prior * 100)}% $\rightarrow$ updated to <strong>{lastBKTResult.scorePercent}%</strong>
+                      {lastBKTResult.prior === null
+                        ? <>Initial mastery estimate: <strong>{lastBKTResult.scorePercent}%</strong></>
+                        : <>Previous mastery {Math.round(lastBKTResult.prior * 100)}% → updated to <strong>{lastBKTResult.scorePercent}%</strong></>}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 font-mono text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800 shrink-0">
-                  <span>Delta:</span>
-                  <span className={lastBKTResult.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                    {lastBKTResult.delta >= 0 ? `+${Math.round(lastBKTResult.delta * 100)}%` : `${Math.round(lastBKTResult.delta * 100)}%`}
-                  </span>
-                </div>
+                {lastBKTResult.delta !== null && (
+                  <div className="flex items-center gap-2 font-mono text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-950/80 border border-slate-800 shrink-0">
+                    <span>Delta:</span>
+                    <span className={lastBKTResult.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                      {lastBKTResult.delta >= 0 ? `+${Math.round(lastBKTResult.delta * 100)}%` : `${Math.round(lastBKTResult.delta * 100)}%`}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -344,7 +424,7 @@ export default function QuizScreen({
               </div>
 
               <p className="text-sm text-slate-300 leading-relaxed">
-                {currentQ.explanations[explanationType]}
+                {currentQ.explanations?.[explanationType] || currentQ.explanations?.simple}
               </p>
             </div>
 
