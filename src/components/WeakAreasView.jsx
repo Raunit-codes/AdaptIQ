@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { RECOMMENDED_COURSES } from '../data/courseData';
+import React, { useEffect, useMemo, useState } from 'react';
+import { getRecommendations, DEMO_USER_ID } from '../api';
 import { BookOpen, CheckCircle, ExternalLink, Clock, Sparkles, Filter, ArrowRight, Award } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -12,18 +12,74 @@ export default function WeakAreasView({
 }) {
   const [filterTopic, setFilterTopic] = useState(selectedTopic || 'all');
   const [activeCourseModal, setActiveCourseModal] = useState(null);
+  const [recommendationData, setRecommendationData] = useState([]);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(true);
+  const [recommendationError, setRecommendationError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRecommendations() {
+      setLoadingRecommendations(true);
+      setRecommendationError('');
+      try {
+        const response = await getRecommendations(DEMO_USER_ID);
+        const rows = [
+          ...(response.priority_recommendations || []),
+          ...(response.extra_recommendations || []),
+        ];
+
+        // Convert the backend course schema to the fields used by this view.
+        const normalized = rows.map((course) => ({
+          ...course,
+          id: course.course_id ?? course.id,
+          title: course.title,
+          subdomain: course.subdomain,
+          description: course.description || '',
+          duration: course.est_duration_min
+            ? `${course.est_duration_min} min`
+            : 'Duration not specified',
+          platform: course.platform || 'Recommended course',
+          content_url: course.content_url || course.article_url || '',
+          skills: course.skills || [],
+        }));
+
+        if (!cancelled) setRecommendationData(normalized);
+      } catch (error) {
+        if (!cancelled) {
+          setRecommendationError(error.message || 'Could not load course recommendations.');
+          setRecommendationData([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingRecommendations(false);
+      }
+    }
+
+    loadRecommendations();
+    return () => { cancelled = true; };
+  }, []);
+
+  const coursesByTopic = useMemo(() => {
+    return recommendationData.reduce((groups, course) => {
+      const topic = course.subdomain;
+      if (!topic) return groups;
+      if (!groups[topic]) groups[topic] = [];
+      groups[topic].push(course);
+      return groups;
+    }, {});
+  }, [recommendationData]);
 
   // Identify weak topics where p_know < 0.80
   const allDomainNames = Object.keys(domainState);
-  const weakTopics = allDomainNames.filter(name => (domainState[name]?.p_know ?? 0) < 0.80);
+  const weakTopics = allDomainNames.filter(name => typeof domainState[name]?.p_know === 'number' && domainState[name].p_know < 0.80);
 
   const displayTopics = filterTopic === 'all' 
     ? (weakTopics.length > 0 ? weakTopics : allDomainNames) 
     : [filterTopic];
 
-  const totalCoursesCount = displayTopics.reduce((acc, topic) => acc + (RECOMMENDED_COURSES[topic]?.length || 0), 0);
+  const totalCoursesCount = displayTopics.reduce((acc, topic) => acc + (coursesByTopic[topic]?.length || 0), 0);
   const completedCount = displayTopics.reduce((acc, topic) => {
-    const list = RECOMMENDED_COURSES[topic] || [];
+    const list = coursesByTopic[topic] || [];
     return acc + list.filter(c => completedCourses[c.id]).length;
   }, 0);
 
@@ -105,7 +161,8 @@ export default function WeakAreasView({
 
           {allDomainNames.map(name => {
             const isSelected = filterTopic === name;
-            const score = Math.round((domainState[name]?.p_know ?? 0.5) * 100);
+            const mastery = domainState[name]?.p_know;
+            const score = typeof mastery === 'number' && Number.isFinite(mastery) ? Math.round(mastery * 100) : null;
             return (
               <button
                 key={name}
@@ -118,9 +175,9 @@ export default function WeakAreasView({
               >
                 <span>{name}</span>
                 <span className={`text-[10px] font-mono px-1 rounded ${
-                  score >= 80 ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
+                  score === null ? 'bg-slate-800 text-slate-400' : score >= 80 ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
                 }`}>
-                  {score}%
+                  {score === null ? 'Not assessed' : `${score}%`}
                 </span>
               </button>
             );
@@ -129,31 +186,51 @@ export default function WeakAreasView({
       </div>
 
       {/* Courses List by Topic */}
+      {loadingRecommendations && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">
+          Loading personalized course recommendations from the backend...
+        </div>
+      )}
+      {!loadingRecommendations && recommendationError && (
+        <div className="rounded-2xl border border-rose-800 bg-rose-950/30 p-5 text-sm text-rose-300">
+          Could not load courses from the backend: {recommendationError}
+        </div>
+      )}
+      {!loadingRecommendations && !recommendationError && recommendationData.length === 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">
+          No course recommendations were returned. Complete the diagnostic quiz first or check the backend course data.
+        </div>
+      )}
       <div className="space-y-6">
-        {displayTopics.map((topic) => {
-          const courses = RECOMMENDED_COURSES[topic] || [];
-          const domainInfo = domainState[topic] || { p_know: 0.5 };
-          const masteryPercent = Math.round(domainInfo.p_know * 100);
+        {displayTopics.filter((topic) => (coursesByTopic[topic] || []).length > 0).map((topic) => {
+          const courses = coursesByTopic[topic] || [];
+          const domainInfo = domainState[topic];
+          const masteryPercent = typeof domainInfo?.p_know === 'number' && Number.isFinite(domainInfo.p_know)
+            ? Math.round(domainInfo.p_know * 100)
+            : null;
+          const isAssessed = masteryPercent !== null;
 
           return (
             <div key={topic} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-800">
                 <div className="flex items-center gap-3">
                   <div className={`w-3 h-3 rounded-full ${
-                    masteryPercent >= 80 ? 'bg-emerald-400' : masteryPercent >= 50 ? 'bg-amber-400' : 'bg-rose-400'
+                    !isAssessed ? 'bg-slate-500' : masteryPercent >= 80 ? 'bg-emerald-400' : masteryPercent >= 50 ? 'bg-amber-400' : 'bg-rose-400'
                   }`} />
                   <div>
                     <h3 className="text-lg font-bold text-white">{topic}</h3>
-                    <p className="text-xs text-slate-400">Current BKT Mastery: {masteryPercent}%</p>
+                    <p className="text-xs text-slate-400">Current BKT Mastery: {isAssessed ? `${masteryPercent}%` : 'Not assessed'}</p>
                   </div>
                 </div>
 
                 <span className={`text-xs font-semibold px-2.5 py-1 rounded-lg border w-fit ${
-                  masteryPercent >= 80
-                    ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
-                    : 'bg-rose-950 text-rose-400 border-rose-800'
+                  !isAssessed
+                    ? 'bg-slate-800 text-slate-400 border-slate-700'
+                    : masteryPercent >= 80
+                      ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                      : 'bg-rose-950 text-rose-400 border-rose-800'
                 }`}>
-                  {masteryPercent >= 80 ? '✓ Proficient' : '⚠ Remediation Required'}
+                  {!isAssessed ? 'Not Assessed' : masteryPercent >= 80 ? '✓ Proficient' : '⚠ Remediation Required'}
                 </span>
               </div>
 
@@ -205,12 +282,23 @@ export default function WeakAreasView({
                           <span className="text-slate-500">{course.platform}</span>
                         </div>
 
-                        <button
-                          onClick={() => setActiveCourseModal(course)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 text-cyan-300 hover:bg-cyan-900 border border-cyan-800 flex items-center gap-1 transition cursor-pointer"
-                        >
-                          Launch Course <ExternalLink className="w-3 h-3" />
-                        </button>
+                        {course.content_url ? (
+                          <a
+                            href={course.content_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 text-cyan-300 hover:bg-cyan-900 border border-cyan-800 flex items-center gap-1 transition"
+                          >
+                            Launch Course <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ) : (
+                          <button
+                            onClick={() => setActiveCourseModal(course)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-950 text-cyan-300 hover:bg-cyan-900 border border-cyan-800 flex items-center gap-1 transition cursor-pointer"
+                          >
+                            Course Details <ExternalLink className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -219,6 +307,12 @@ export default function WeakAreasView({
             </div>
           );
         })}
+        {!loadingRecommendations && !recommendationError && recommendationData.length > 0 &&
+          displayTopics.every((topic) => !(coursesByTopic[topic] || []).length) && (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">
+              The backend did not recommend a course for the selected subdomain. Select “All Weak Sub-Domains” to see the current recommendations.
+            </div>
+          )}
       </div>
 
       {/* Simulated Interactive Course Modal */}
@@ -258,7 +352,7 @@ export default function WeakAreasView({
             <div className="flex items-center justify-between pt-2">
               <button
                 onClick={() => {
-                  handleToggle(activeCourseModal, filterTopic === 'all' ? 'Social Engineering' : filterTopic);
+                  handleToggle(activeCourseModal, activeCourseModal.subdomain || (filterTopic === 'all' ? 'Social Engineering' : filterTopic));
                   setActiveCourseModal(null);
                 }}
                 className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 transition"

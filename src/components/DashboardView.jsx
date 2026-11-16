@@ -12,43 +12,28 @@ export default function DashboardView({ domainState, onNavigateToQuiz, onNavigat
   const totalFinancialSavings = totalHoursSaved * hourlyRate;
   const simulatedBreachRiskReduction = 72; // %
 
-  // Transform domainState into Radar Chart data
+  // Only plot mastery that was returned by the backend or selected in demo mode.
+  const getScore = (domain) => {
+    const value = domainState[domain]?.p_know;
+    return typeof value === 'number' && Number.isFinite(value)
+      ? Math.round(value * 100)
+      : null;
+  };
+
   const radarChartData = [
-    {
-      subject: 'Phishing',
-      teamScore: Math.round((domainState['Phishing Awareness']?.p_know ?? 0.72) * 100),
-      benchmark: 85,
-      fullMark: 100
-    },
-    {
-      subject: 'Passwords',
-      teamScore: Math.round((domainState['Password Hygiene']?.p_know ?? 0.85) * 100),
-      benchmark: 90,
-      fullMark: 100
-    },
-    {
-      subject: 'Social Eng.',
-      teamScore: Math.round((domainState['Social Engineering']?.p_know ?? 0.45) * 100),
-      benchmark: 80,
-      fullMark: 100
-    },
-    {
-      subject: 'Data Handling',
-      teamScore: Math.round((domainState['Confidential Data Handling']?.p_know ?? 0.60) * 100),
-      benchmark: 75,
-      fullMark: 100
-    },
-    {
-      subject: 'Incident Rep.',
-      teamScore: Math.round((domainState['Incident Reporting & SLA']?.p_know ?? 0.35) * 100),
-      benchmark: 80,
-      fullMark: 100
-    }
+    { subject: 'Phishing', teamScore: getScore('Phishing'), benchmark: 85, fullMark: 100 },
+    { subject: 'Passwords', teamScore: getScore('Password Hygiene'), benchmark: 90, fullMark: 100 },
+    { subject: 'Social Eng.', teamScore: getScore('Social Engineering'), benchmark: 80, fullMark: 100 },
+    { subject: 'Data Handling', teamScore: getScore('Data Handling'), benchmark: 75, fullMark: 100 },
+    { subject: 'Incident Rep.', teamScore: getScore('Incident Reporting'), benchmark: 80, fullMark: 100 },
   ];
 
-  const overallAverage = Math.round(
-    radarChartData.reduce((acc, cur) => acc + cur.teamScore, 0) / radarChartData.length
-  );
+  const assessedScores = radarChartData
+    .map((item) => item.teamScore)
+    .filter((score) => score !== null);
+  const overallAverage = assessedScores.length
+    ? Math.round(assessedScores.reduce((total, score) => total + score, 0) / assessedScores.length)
+    : null;
 
   return (
     <div className="space-y-8 py-4">
@@ -73,9 +58,9 @@ export default function DashboardView({ domainState, onNavigateToQuiz, onNavigat
             <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 text-right">
               <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-semibold">Aggregate Mastery</span>
               <span className={`text-xl font-mono font-black ${
-                overallAverage >= 80 ? 'text-emerald-400' : overallAverage >= 60 ? 'text-cyan-400' : 'text-rose-400'
+                overallAverage === null ? 'text-slate-400' : overallAverage >= 80 ? 'text-emerald-400' : overallAverage >= 60 ? 'text-cyan-400' : 'text-rose-400'
               }`}>
-                {overallAverage}%
+                {overallAverage === null ? '—' : `${overallAverage}%`}
               </span>
             </div>
           </div>
@@ -208,7 +193,7 @@ export default function DashboardView({ domainState, onNavigateToQuiz, onNavigat
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
           <div>
             <h3 className="text-lg font-bold text-white">Subdomain Competency Matrix</h3>
-            <p className="text-xs text-slate-400">Detailed breakdown of prior parameters and remediation status.</p>
+            <p className="text-xs text-slate-400">Mastery scores from the backend, with assessment status by subdomain.</p>
           </div>
         </div>
 
@@ -217,7 +202,7 @@ export default function DashboardView({ domainState, onNavigateToQuiz, onNavigat
             <thead className="bg-slate-950 text-slate-400 uppercase font-mono text-[10px] border-b border-slate-800">
               <tr>
                 <th className="py-3 px-4">Sub-Domain</th>
-                <th className="py-3 px-4">BKT Prior P(L_0)</th>
+                <th className="py-3 px-4">Current Mastery</th>
                 <th className="py-3 px-4">Slip P(S)</th>
                 <th className="py-3 px-4">Guess P(G)</th>
                 <th className="py-3 px-4">Status</th>
@@ -226,38 +211,43 @@ export default function DashboardView({ domainState, onNavigateToQuiz, onNavigat
             </thead>
             <tbody className="divide-y divide-slate-800">
               {Object.entries(domainState).map(([name, data]) => {
-                const score = Math.round(data.p_know * 100);
-                const isProficient = score >= 80;
+                const score = typeof data.p_know === 'number' && Number.isFinite(data.p_know)
+                  ? Math.round(data.p_know * 100)
+                  : null;
+                const isProficient = score !== null && score >= 80;
+                const isAssessed = score !== null;
 
                 return (
                   <tr key={name} className="hover:bg-slate-850/50 transition">
                     <td className="py-3.5 px-4 font-semibold text-white">{name}</td>
-                    <td className="py-3.5 px-4 font-mono text-cyan-400 font-bold">{score}%</td>
-                    <td className="py-3.5 px-4 font-mono text-slate-400">{(data.p_slip ?? 0.10).toFixed(2)}</td>
-                    <td className="py-3.5 px-4 font-mono text-slate-400">{(data.p_guess ?? 0.20).toFixed(2)}</td>
+                    <td className="py-3.5 px-4 font-mono text-cyan-400 font-bold">{score === null ? '—' : `${score}%`}</td>
+                    <td className="py-3.5 px-4 font-mono text-slate-400">{typeof data.p_slip === 'number' ? data.p_slip.toFixed(2) : '—'}</td>
+                    <td className="py-3.5 px-4 font-mono text-slate-400">{typeof data.p_guess === 'number' ? data.p_guess.toFixed(2) : '—'}</td>
                     <td className="py-3.5 px-4">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        isProficient
-                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                          : 'bg-rose-950 text-rose-400 border border-rose-800'
+                        !isAssessed
+                          ? 'bg-slate-800 text-slate-400 border border-slate-700'
+                          : isProficient
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                            : 'bg-rose-950 text-rose-400 border border-rose-800'
                       }`}>
-                        {isProficient ? 'Mastered' : 'Needs Focus'}
+                        {!isAssessed ? 'Not Assessed' : isProficient ? 'Mastered' : 'Needs Focus'}
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-right">
-                      {isProficient ? (
+                      {!isAssessed || !isProficient ? (
+                        <button
+                          onClick={() => isAssessed ? onNavigateToRemediation(name) : onNavigateToQuiz()}
+                          className="px-2.5 py-1 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 rounded-lg text-xs font-semibold transition"
+                        >
+                          {isAssessed ? 'Fix Gaps →' : 'Assess Skills'}
+                        </button>
+                      ) : (
                         <button
                           onClick={() => onNavigateToQuiz()}
                           className="text-slate-400 hover:text-white text-xs font-semibold underline"
                         >
                           Maintain Mastery
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => onNavigateToRemediation(name)}
-                          className="px-2.5 py-1 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800 rounded-lg text-xs font-semibold transition"
-                        >
-                          Fix Gaps →
                         </button>
                       )}
                     </td>
